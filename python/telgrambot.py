@@ -6,6 +6,8 @@ from telegram.ext import CallbackQueryHandler
 import os
 from dotenv import load_dotenv
 import mysql.connector
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 
 # Your new cloud connection!
@@ -197,7 +199,19 @@ async def button_click_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
       print(f"Logged: {selected_symptom}")
       await query.edit_message_text(text=final_message, parse_mode='Markdown')
+# --- DUMMY WEB SERVER FOR RENDER ---
+class DummyHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is awake and running!")
 
+def keep_alive():
+    # Render assigns a port automatically, we catch it here
+    port = int(os.environ.get('PORT', 10000)) 
+    server = HTTPServer(('0.0.0.0', port), DummyHandler)
+    server.serve_forever()
+# -----------------------------------
 #message 
 async def handle_message(update: Update , context : ContextTypes.DEFAULT_TYPE):
    if update.message:
@@ -239,6 +253,7 @@ if __name__ == '__main__':
     
     #error
     app.add_error_handler(error)
+    threading.Thread(target=keep_alive, daemon=True).start()
 
     #polls the bot
     print('Polling...')
