@@ -3,7 +3,23 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler , MessageHandler, filters , ContextTypes
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CallbackQueryHandler
-TOKEN : Final = '8574677639:AAGTthsDUK47EiV5Q7v7xYyb0u30nW7kAzg'
+import os
+from dotenv import load_dotenv
+import mysql.connector
+
+
+# Your new cloud connection!
+conn = mysql.connector.connect(
+    host="bhavya-bhavya-dc82.l.aivencloud.com",
+    user="avnadmin",
+    password="AVNS_xjNdufbB05DjYI5AfmQ",
+    port=16265, # Aiven's MySQL port
+    database="defaultdb"
+)
+load_dotenv()
+TOKEN : Final = os.getenv('TELEGRAM_TOKEN')
+if not TOKEN:
+    raise ValueError("TELEGRAM_TOKEN is missing! Check your .env file.")
 BOT_USERNAME : Final = '@ssymptom_bot'
 
 #creating commands
@@ -207,6 +223,7 @@ async def error (update: object , context : ContextTypes.DEFAULT_TYPE):
 
 if __name__ == '__main__':
     print('Starting bot....')
+    
     app = Application.builder().token(TOKEN).build()
     #commands
     app.add_handler(CommandHandler('start', start_command))
