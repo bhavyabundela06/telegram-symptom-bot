@@ -19,6 +19,43 @@ conn = mysql.connector.connect(
     database="defaultdb"
 )
 load_dotenv()
+def get_db_connection():
+    """Establishes a secure connection to the Aiven MySQL database."""
+    return mysql.connector.connect(
+        host=os.getenv('DB_HOST'),
+        user=os.getenv('DB_USER'),
+        password=os.getenv('DB_PASSWORD'),
+        port=os.getenv('DB_PORT'),
+        database=os.getenv('DB_NAME')
+    )
+    
+def init_db():
+    """Creates the symptom_logs table if it doesn't already exist."""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # We use BIGINT for user_id because Telegram IDs are long numbers
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS symptom_logs (
+                log_id INT AUTO_INCREMENT PRIMARY KEY,
+                user_id BIGINT,
+                symptom VARCHAR(255),
+                log_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+        print("Database connected and table is ready!")
+        
+    except mysql.connector.Error as err:
+        print(f"Error connecting to database: {err}")
+        
+    finally:
+        if 'conn' in locals() and conn.is_connected():
+            cursor.close()
+            conn.close()
+# ----------------------
+
 TOKEN : Final = os.getenv('TELEGRAM_TOKEN')
 if not TOKEN:
     raise ValueError("TELEGRAM_TOKEN is missing! Check your .env file.")
@@ -26,60 +63,71 @@ BOT_USERNAME : Final = '@ssymptom_bot'
 
 #creating commands
 #async function used to make our functions asynchronous with the new API
-
-async def start_command(update : Update , context : ContextTypes.DEFAULT_TYPE):
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message:
-     await update.message.reply_text("hello thanks for chatting with me how can i help you ? ")
+        await update.message.reply_text("hello thanks for chatting with me how can i help you ? ")
 
-
-
-#help command 
-async def help_command(update : Update , context : ContextTypes.DEFAULT_TYPE):
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message:
-     await update.message.reply_text("you can type or record so that i can respond ")
+        await update.message.reply_text("you can type or record so that i can respond ")
     
-#custom command 
-async def custom_command(update : Update , context : ContextTypes.DEFAULT_TYPE):
+async def custom_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message:
-     await update.message.reply_text("this is a custom commnd ")
+        await update.message.reply_text("this is a custom commnd ")
 
+async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Fix 1: Prove to Pylance that the user definitely exists
+    if not update.message or not update.message.from_user:
+        return
+        
+    user_id = update.message.from_user.id
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT symptom, DATE_FORMAT(DATE_ADD(log_date, INTERVAL '5:30' HOUR_MINUTE), '%b %d, %Y - %h:%i %p') 
+            FROM symptom_logs 
+            WHERE user_id = %s 
+            ORDER BY log_date DESC
+        """, (user_id,))
+        
+        records = cursor.fetchall()
+        conn.close()
 
-async def log_symptoms_command( update : Update , context : ContextTypes.DEFAULT_TYPE):
-  categories = [
-      'Pain & Aches', 'Stomach & Digestion', 
-      'Cold, Flu & Respiratory', 'General & Neurological', 'Skin'
-  ]
-  symptoms = [
-    # Pain & Aches
-    'headache', 'migraine', 'joint pain', 'muscle ache', 'knee pain',
-    'shoulder pain', 'neck pain', 'hip pain', 'wrist pain', 'ankle pain',
-    'lower back pain', 'upper back pain', 'chest pain', 'earache',
-    
-    # Stomach & Digestion
-    'stomachache', 'nausea', 'vomiting', 'diarrhea', 'constipation',
-    'heartburn', 'indigestion', 'bloating', 'loss of appetite',
-    
-    # Cold, Flu & Respiratory
-    'fever', 'cough', 'sore throat', 'runny nose', 'stuffy nose', 
-    'shortness of breath', 'wheezing', 'chills', 'sneezing',
-    
-    # General & Neurological
-    'fatigue', 'weakness', 'dizziness', 'trouble sleeping', 'confusion',
-    'numbness', 'tingling', 'blurry vision', 'ringing in ears',
-    
-    # Skin
-    'rash', 'itching', 'bruising', 'swelling'
-]
-  keyboard = []
-  for cat in categories:
-      # Add "category_" to the callback data so we know it's a category button
-      keyboard.append([InlineKeyboardButton(cat, callback_data=f"category_{cat}")])
+        if not records:
+            await update.message.reply_text("You don't have any logged symptoms yet.")
+            return
 
-  reply_markup = InlineKeyboardMarkup(keyboard)
-  if update.message:
-        await update.message.reply_text('please select what you are feeling right now: ' , reply_markup=reply_markup)
+        report = "📋 **Your Symptom History:**\n\n"
+        
+        # We unpack the tuple directly in the loop!
+        for symptom_val, date_val in records:
+            symptom_name = str(symptom_val).title()
+            date_logged = str(date_val)
+            report += f"• {date_logged} - **{symptom_name}**\n"
+
+            # (Also make sure this line is indented correctly, right under report += ...)
+
+        await update.message.reply_text(report, parse_mode='Markdown')
+        
+    except Exception as e:
+        print(f"Database error: {e}")
+        await update.message.reply_text("Sorry, there was an error retrieving your history.")
+
+async def log_symptoms_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    categories = [
+        'Pain & Aches', 'Stomach & Digestion', 
+        'Cold, Flu & Respiratory', 'General & Neurological', 'Skin'
+    ]
+    keyboard = []
+    for cat in categories:
+        keyboard.append([InlineKeyboardButton(cat, callback_data=f"category_{cat}")])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    if update.message:
+        await update.message.reply_text('please select what you are feeling right now: ', reply_markup=reply_markup)
   
-
 #responsess
 def handle_response(text:str)-> str:
    processed : str = text.lower()
@@ -190,6 +238,18 @@ async def button_click_handler(update: Update, context: ContextTypes.DEFAULT_TYP
              selected_symptom, 
              'Please drink a glass of water and make sure you are resting comfortably.'
       )
+      try:
+              conn = get_db_connection()
+              cursor = conn.cursor()
+              cursor.execute(
+                  "INSERT INTO symptom_logs (user_id, symptom) VALUES (%s, %s)", 
+                  (query.from_user.id, selected_symptom)
+              )
+              conn.commit()
+              conn.close()
+              print(f"Successfully saved {selected_symptom} to database.")
+      except Exception as e:
+              print(f"Database error: {e}")
 
       final_message = (
           f"✅ Noted. Logging your {selected_symptom}.\n\n"
@@ -213,48 +273,72 @@ def keep_alive():
     server.serve_forever()
 # -----------------------------------
 #message 
-async def handle_message(update: Update , context : ContextTypes.DEFAULT_TYPE):
-   if update.message:
-    message_type: str = update.message.chat.type
-    if update.message and update.message.text:
-     text: str = update.message.text
-     print(f'User ({update.message.chat.id}) in {message_type}: "{text}')
-     
-     if message_type == 'group':
-       if BOT_USERNAME in text:
-         new_text: str = text.replace(BOT_USERNAME,' ').strip()
-         response: str = handle_response(new_text)
-       else:
-         return
-     else:
-      response: str = handle_response(text)
-    print('Bot:', response)
-    await update.message.reply_text(response)
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message:
+        message_type: str = update.message.chat.type
+        if update.message and update.message.text:
+            text: str = update.message.text
+            print(f'User ({update.message.chat.id}) in {message_type}: "{text}"')
+            
+            if message_type == 'group':
+                if BOT_USERNAME in text:
+                    new_text: str = text.replace(BOT_USERNAME, ' ').strip()
+                    response: str = handle_response(new_text)
+                else:
+                    return
+            else:
+                response: str = handle_response(text)
+                
+            # --- NEW: SAVE TEXT SYMPTOMS TO DATABASE ---
+            # If the bot generated a "Noted..." response, it means it found a symptom!
+            if response.startswith("Noted, logging"):
+                # Clean up the string to extract just the symptom (e.g., "headache")
+                detected_symptom = response.replace("Noted, logging ", "").replace(".", "")
+                
+                user = update.message.from_user
+                if user:
+                    try:
+                        conn = get_db_connection()
+                        cursor = conn.cursor()
+                        cursor.execute(
+                            "INSERT INTO symptom_logs (user_id, symptom) VALUES (%s, %s)", 
+                            (user.id, detected_symptom)
+                        )
+                        conn.commit()
+                        conn.close()
+                        print(f"Successfully saved text symptom: {detected_symptom}")
+                    except Exception as e:
+                        print(f"Database error on text input: {e}")
+            # -------------------------------------------
 
-
+            print('Bot:', response)
+            await update.message.reply_text(response)
 async def error (update: object , context : ContextTypes.DEFAULT_TYPE):
   print(f'Update {update} caused error {context.error}')
 
 if __name__ == '__main__':
     print('Starting bot....')
-    
+    init_db()
     app = Application.builder().token(TOKEN).build()
     #commands
     app.add_handler(CommandHandler('start', start_command))
     app.add_handler(CommandHandler('help', help_command))
     app.add_handler(CommandHandler('custom', custom_command))
     app.add_handler(CommandHandler('log_symptoms', log_symptoms_command))
-    #messages
-    # FIX: Added CallbackQueryHandler so the buttons actually fire your function
+    app.add_handler(CommandHandler('history', history_command))
+    
+    # buttons
     app.add_handler(CallbackQueryHandler(button_click_handler))
     
-    #messages
-    app.add_handler(MessageHandler(filters.TEXT,handle_message))
+    # messages
+    app.add_handler(MessageHandler(filters.TEXT, handle_message))
     
-    #error
+    # error
     app.add_error_handler(error)
+    
+    # start background web server
     threading.Thread(target=keep_alive, daemon=True).start()
 
-    #polls the bot
+    # polls the bot
     print('Polling...')
     app.run_polling(poll_interval=5)
