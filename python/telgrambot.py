@@ -11,13 +11,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 
 # Your new cloud connection!
-conn = mysql.connector.connect(
-    host="bhavya-bhavya-dc82.l.aivencloud.com",
-    user="avnadmin",
-    password="AVNS_xjNdufbB05DjYI5AfmQ",
-    port=16265, # Aiven's MySQL port
-    database="defaultdb"
-)
+
 load_dotenv()
 def get_db_connection():
     """Establishes a secure connection to the Aiven MySQL database."""
